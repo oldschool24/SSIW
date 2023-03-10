@@ -45,7 +45,7 @@ def pad_to_crop_sz(
     crop_w: int,
     mean: Tuple[float,float,float]
     ) -> Tuple[np.ndarray,int,int]:
-    ori_h, ori_w, _ = image.shape
+    ori_h, ori_w = image.shape[:2]
     pad_h = max(crop_h - ori_h, 0)
     pad_w = max(crop_w - ori_w, 0)
     pad_h_half = int(pad_h / 2)
@@ -75,7 +75,7 @@ def resize_by_scaled_short_side(
 	Returns:
 	    image_scaled:
     """
-    h, w, _ = image.shape
+    h, w = image.shape[:2]  # hxwx3 or hxw
     short_size = round(scale * base_size)
     new_h = short_size
     new_w = short_size

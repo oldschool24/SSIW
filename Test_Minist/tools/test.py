@@ -26,6 +26,10 @@ import torch.multiprocessing as mp
 from utils.segformer import get_configured_segformer
 from tqdm import tqdm 
 
+
+torch.cuda.set_device(1)
+
+
 def get_logger():
     """
     """
@@ -38,6 +42,7 @@ def get_logger():
         handler.setFormatter(logging.Formatter(fmt))
         logger.addHandler(handler)
     return logger
+
 
 logger = get_logger()
 
@@ -58,7 +63,7 @@ def get_parser() -> CfgNode:
     parser.add_argument('opts', help='see mseg_semantic/config/test/default_config_360.yaml for all options, model path should be passed in',
         default=None, nargs=argparse.REMAINDER)
     args = parser.parse_args()
-    config_path = os.path.join('configs', f'{args.config}.yaml')
+    config_path = os.path.join('configs', f'test_{args.config}.yaml')
     args.config = config_path
 
     # test on samples
@@ -73,12 +78,9 @@ def get_parser() -> CfgNode:
     cfg.cam_id = args.cam_id
     cfg.img_folder = args.img_folder
     cfg.img_file_type = args.img_file_type
-    cfg.gpus_num = args.gpus_num
     cfg.save_folder = args.save_folder
     return cfg
 
-
-  
 def get_prediction(embs, gt_embs_list):
     prediction = []
     logits = []
@@ -101,7 +103,6 @@ def get_prediction(embs, gt_embs_list):
         prediction = torch.cat(prediction, dim=0)
         logit = torch.cat(logits, dim=0)
     return logit
-
   
 def single_scale_single_crop_cuda(model,
                       image: np.ndarray,
@@ -132,7 +133,6 @@ def single_scale_single_crop_cuda(model,
     prediction = cv2.resize(prediction_crop, (w, h), interpolation=cv2.INTER_LINEAR)
     return prediction
 
-  
 def single_scale_cuda(model,
                       image: np.ndarray,
                       h: int, w: int, gt_embs_list, stride_rate: float = 2/3,
@@ -183,7 +183,6 @@ def single_scale_cuda(model,
     prediction = cv2.resize(prediction_crop, (w, h), interpolation=cv2.INTER_LINEAR)
     return prediction
 
-  
 def do_test(args, local_rank):
     imgs_on_devices = organize_images(args, local_rank)
     model = get_configured_segformer(args.num_model_classes,
@@ -197,7 +196,7 @@ def do_test(args, local_rank):
                                                           output_device=local_rank,
                                                           find_unused_parameters=True)
     else:
-        model = torch.nn.DataParallel(model)
+        model = torch.nn.DataParallel(model, device_ids=[local_rank], output_device=local_rank)
 
     ckpt_path = args.model_path
     checkpoint = torch.load(ckpt_path, map_location='cpu')['state_dict']
@@ -259,7 +258,7 @@ def organize_images(args, local_rank):
 
 def main_worker(local_rank: int, cfg: dict):
     if cfg.distributed:
-        global_rank = loca_rank
+        global_rank = local_rank
         world_size = cfg.gpus_num
         
         torch.cuda.set_device(global_rank)
@@ -268,6 +267,8 @@ def main_worker(local_rank: int, cfg: dict):
                             world_size=world_size,
                             rank=global_rank,)
     do_test(cfg, local_rank)
+
+    
 if __name__ == '__main__':
     args = get_parser()
     logger.info(args)
@@ -276,11 +277,11 @@ if __name__ == '__main__':
     dist_url = dist_url[:-2] + str(os.getpid() % 100).zfill(2)
     args.dist_url = dist_url
     
-    num_gpus = torch.cuda.device_count()
-    if num_gpus != args.gpus_num:
-        raise RuntimeError('The set gpus number cannot match the detected gpus number. Please check or set CUDA_VISIBLE_DEVICES')
+    # num_gpus = torch.cuda.device_count()
+    # if num_gpus != args.gpus_num:
+    #     raise RuntimeError('The set gpus number cannot match the detected gpus number. Please check or set CUDA_VISIBLE_DEVICES')
     
-    if num_gpus > 1:
+    if args.gpus_num > 1:
         args.distributed = True
     else:
         args.distributed = False
@@ -291,6 +292,6 @@ if __name__ == '__main__':
         json.dump(UNI_UID2UNAME, f)
     
     if not args.distributed:
-        main_worker(0, args)
+        main_worker(1, args)
     else:
         mp.spawn(main_worker, nprocs=args.gpus_num, args=(args, ))
